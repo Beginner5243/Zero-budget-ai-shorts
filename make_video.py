@@ -50,10 +50,16 @@ def audio_duration(path):
     return float(out.strip())
 
 
+def split_sentences(script):
+    safe = re.sub(
+        r"\b(Dr|Mr|Mrs|Ms|Prof|St|vs|etc)\.", r"\1<DOT>", script.strip()
+    )
+    parts = re.split(r"(?<=[.!?।])\s+", safe)
+    return [p.replace("<DOT>", ".") for p in parts if p]
+
+
 def build_filter(script, duration, font, wrap, tag):
-        safe = re.sub(r"\b(Dr|Mr|Mrs|Ms|Prof|St|vs|etc)\.", r"\1<DOT>", script.strip())
-    sentences = [s.replace("<DOT>", ".") for s in
-                 re.split(r"(?<=[.!?।])\s+", safe) if s]
+    sentences = split_sentences(script)
     total = sum(len(s) for s in sentences) or 1
     parts, t = [], 0.0
     for k, s in enumerate(sentences):
