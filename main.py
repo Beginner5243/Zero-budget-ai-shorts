@@ -33,11 +33,11 @@ def main():
         topics = discover_topics()
     except Exception as error:
         print(f"Topic discovery error: {error}")
-        return
+        topics = []
 
     if not topics:
         print("No topics found. Try again later.")
-        return
+        topics = []
 
     results = []
 
@@ -55,4 +55,19 @@ def main():
 
         script = generate_script(topic)
 
-       
+        results.append({
+            "topic": topic,
+            "verification": verification,
+            "script": script,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    out_file = OUTPUT_DIR / "shorts_ideas.json"
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+
+    print(f"Saved {len(results)} ideas to {out_file}")
+
+
+if __name__ == "__main__":
+    main()
