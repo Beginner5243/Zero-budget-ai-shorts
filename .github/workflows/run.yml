@@ -1,0 +1,35 @@
+name: AI Shorts Automation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  run-shorts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Shorts creator
+        run: python main.py
+
+      - name: Upload generated ideas
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-ideas
+          path: output/shorts_ideas.json
+          if-no-files-found: warn
