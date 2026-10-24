@@ -51,7 +51,9 @@ def audio_duration(path):
 
 
 def build_filter(script, duration, font, wrap, tag):
-    sentences = [s for s in re.split(r"(?<=[.!?।])\s+", script.strip()) if s]
+        safe = re.sub(r"\b(Dr|Mr|Mrs|Ms|Prof|St|vs|etc)\.", r"\1<DOT>", script.strip())
+    sentences = [s.replace("<DOT>", ".") for s in
+                 re.split(r"(?<=[.!?।])\s+", safe) if s]
     total = sum(len(s) for s in sentences) or 1
     parts, t = [], 0.0
     for k, s in enumerate(sentences):
