@@ -27,9 +27,12 @@ jobs:
       - name: Run Shorts creator
         run: python main.py
 
-      - name: Upload generated ideas
+      - name: Make videos
+        run: python make_video.py
+
+      - name: Upload generated output
         uses: actions/upload-artifact@v4
         with:
-          name: shorts-ideas
-          path: output/shorts_ideas.json
+          name: shorts-output
+          path: output/
           if-no-files-found: warn
