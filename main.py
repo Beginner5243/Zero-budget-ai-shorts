@@ -16,8 +16,10 @@ from fact_checker import verify_fact
 
 OUTPUT_DIR = Path("output")
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
-MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"]
+API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+PREFERRED_MODELS = ["gemini-3.8-flash"]
 MAX_TOPICS = 2
+REQUIRED_KEYS = ("title_en", "script_en", "title_hi", "script_hi")
 
 
 def normalize_topics(raw):
@@ -44,39 +46,78 @@ def normalize_topics(raw):
     return names
 
 
+def list_flash_models():
+    """Ask Google which flash models this key can use right now."""
+    try:
+        r = requests.get(
+            f"{API_BASE}/models",
+            headers={"x-goog-api-key": API_KEY},
+            params={"pageSize": 100},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"list models failed: {r.status_code}")
+            return []
+        names = []
+        for m in r.json().get("models", []):
+            name = m.get("name", "").split("/")[-1]
+            methods = m.get("supportedGenerationMethods", [])
+            if ("generateContent" in methods and "flash" in name
+                    and not any(x in name for x in
+                                ("image", "tts", "live", "audio", "thinking"))):
+                names.append(name)
+        return sorted(names, reverse=True)
+    except Exception as error:
+        print(f"list models error: {error}")
+        return []
+
+
+def try_model(model, prompt):
+    url = f"{API_BASE}/models/{model}:generateContent"
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.7,
+        },
+    }
+    headers = {"x-goog-api-key": API_KEY, "Content-Type": "application/json"}
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=90)
+        if r.status_code != 200:
+            print(f"{model} failed: {r.status_code} {r.text[:150]}")
+            return None
+        text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        text = text.strip().strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        data = json.loads(text)
+        if all(isinstance(data.get(k), str) and data.get(k)
+               for k in REQUIRED_KEYS):
+            print(f"Script made with {model}")
+            return data
+        print(f"{model}: JSON keys missing")
+    except Exception as error:
+        print(f"{model} error: {error}")
+    return None
+
+
 def call_gemini(prompt):
     if not API_KEY:
         print("GEMINI_API_KEY missing")
         return None
-    for model in MODELS:
-        url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-               f"{model}:generateContent")
-        body = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "temperature": 0.7,
-            },
-        }
-        headers = {"x-goog-api-key": API_KEY,
-                   "Content-Type": "application/json"}
-        try:
-            r = requests.post(url, headers=headers, json=body, timeout=60)
-            if r.status_code != 200:
-                print(f"{model} failed: {r.status_code} {r.text[:200]}")
-                continue
-            text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-            text = text.strip().strip("`")
-            if text.startswith("json"):
-                text = text[4:]
-            data = json.loads(text)
-            if all(isinstance(data.get(k), str) and data.get(k)
-                   for k in ("title_en", "script_en", "title_hi", "script_hi")):
-                print(f"Script made with {model}")
-                return data
-            print(f"{model}: JSON keys missing")
-        except Exception as error:
-            print(f"{model} error: {error}")
+
+    for model in PREFERRED_MODELS:
+        data = try_model(model, prompt)
+        if data:
+            return data
+
+    for model in list_flash_models()[:3]:
+        if model in PREFERRED_MODELS:
+            continue
+        data = try_model(model, prompt)
+        if data:
+            return data
     return None
 
 
@@ -88,9 +129,9 @@ def fallback_scripts(topic):
             f"There is more to {topic} than most people realise. "
             "Follow for more amazing facts."
         ),
-        "title_hi": f"{topic} के बारे में हैरान करने वाला तथ्य",
+        "title_hi": "हैरान करने वाला तथ्य",
         "script_hi": (
-            f"क्या आप {topic} के बारे में यह जानते हैं? "
+            "क्या आप यह जानते हैं? "
             "इसमें बहुत कुछ ऐसा है जो ज्यादातर लोग नहीं जानते। "
             "ऐसे और तथ्यों के लिए फॉलो करें।"
         ),
