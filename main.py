@@ -10,7 +10,6 @@ from pathlib import Path
 
 import requests
 
-from topic_discovery import discover_topics
 from fact_checker import verify_fact
 
 
@@ -21,29 +20,28 @@ PREFERRED_MODELS = ["gemini-3.8-flash"]
 MAX_TOPICS = 2
 REQUIRED_KEYS = ("title_en", "script_en", "title_hi", "script_hi")
 
+# Wikipedia-friendly names of topics that make good "wow" Shorts.
+WOW_TOPICS = [
+    "Mariana Trench", "Octopus", "Black hole", "Bermuda Triangle",
+    "Tardigrade", "Great Blue Hole", "Voyager 1", "Tunguska event",
+    "Antikythera mechanism", "Lake Natron", "Anglerfish",
+    "Turritopsis dohrnii", "Neutron star", "Aurora", "Lightning",
+    "Great Pyramid of Giza", "Dead Sea", "Amazon rainforest",
+    "Honey bee", "Mount Everest", "Sahara", "Human brain",
+    "Platypus", "Pluto", "Saturn", "Jupiter", "Sun", "Moon",
+    "Deep Sea", "Great Barrier Reef", "Baikal", "Yellowstone Caldera",
+    "Mantis shrimp", "Axolotl", "Blue whale", "Giant squid",
+    "Chernobyl disaster", "International Space Station",
+    "Rosetta Stone", "Stonehenge", "Fibonacci sequence",
+    "Speed of light", "DNA", "Photosynthesis", "Gravity",
+]
 
-def normalize_topics(raw):
-    if raw is None:
-        return []
-    if isinstance(raw, dict):
-        for key in ("topics", "items", "results", "data"):
-            if isinstance(raw.get(key), list):
-                raw = raw[key]
-                break
-        else:
-            raw = [raw]
-    if isinstance(raw, str):
-        raw = [raw]
-    names = []
-    for item in list(raw):
-        if isinstance(item, str):
-            names.append(item)
-        elif isinstance(item, dict):
-            names.append(str(item.get("title") or item.get("topic")
-                             or item.get("name") or item))
-        else:
-            names.append(str(item))
-    return names
+
+def pick_topics():
+    """Pick different topics every day, without any API."""
+    n = len(WOW_TOPICS)
+    start = (datetime.now(timezone.utc).toordinal() * MAX_TOPICS) % n
+    return [WOW_TOPICS[(start + i) % n] for i in range(MAX_TOPICS)]
 
 
 def list_flash_models():
@@ -145,15 +143,17 @@ Topic: {topic}
 Reference notes (may be incomplete): {notes}
 
 Rules:
-- Use only true, well-known facts. Never invent numbers, names or dates.
-- Start with a strong hook question or shocking line.
-- 6 to 8 short sentences, about 70 to 85 words (30 to 35 seconds when spoken).
-- Plain spoken language. No emojis, no hashtags, no stage directions.
-- End by asking the viewer to follow for more amazing facts.
+- Pick the single most surprising, TRUE fact about the topic. Never invent numbers, names or dates.
+- First sentence is a shocking hook, under 12 words.
+- 6 to 8 short sentences, about 70 to 85 words in total (30 to 35 seconds when spoken).
+- Use simple everyday spoken words, like talking to a friend. No flowery or poetic language.
+- No emojis, no hashtags, no stage directions.
+- Last sentence: ask the viewer to follow for more amazing facts.
 
 Return ONLY JSON with exactly these keys:
 title_en, script_en, title_hi, script_hi
-script_hi is the same story written naturally in Hindi (Devanagari script)."""
+title is a catchy title under 60 characters.
+script_hi is the same story written naturally in simple spoken Hindi (Devanagari script)."""
     return call_gemini(prompt) or fallback_scripts(topic)
 
 
@@ -161,20 +161,12 @@ def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     print("=== Zero-Budget AI Shorts Creator ===")
-    print("Finding topics...")
-
-    try:
-        topics = normalize_topics(discover_topics())
-    except Exception as error:
-        print(f"Topic discovery error: {error}")
-        topics = []
-
-    if not topics:
-        print("No topics found. Try again later.")
+    topics = pick_topics()
+    print(f"Today's topics: {topics}")
 
     results = []
 
-    for topic in topics[:MAX_TOPICS]:
+    for topic in topics:
         print(f"Processing: {topic}")
         try:
             verification = verify_fact(topic)
