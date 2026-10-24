@@ -1,18 +1,45 @@
 import asyncio
 import json
+import re
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
 import edge_tts
 
 OUTPUT_DIR = Path("output")
-VOICE = "en-US-GuyNeural"
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+TMP = Path(tempfile.mkdtemp())
+
+LANGS = {
+    "en": {
+        "voice": "en-US-GuyNeural",
+        "font_query": "DejaVu Sans:bold",
+        "font_fallback": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "wrap": 20,
+    },
+    "hi": {
+        "voice": "hi-IN-MadhurNeural",
+        "font_query": "Noto Sans Devanagari:bold",
+        "font_fallback": "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
+        "wrap": 18,
+    },
+}
 
 
-async def make_audio(text, path):
-    await edge_tts.Communicate(text, VOICE).save(str(path))
+def find_font(query, fallback):
+    try:
+        out = subprocess.check_output(
+            ["fc-match", "-f", "%{file}", query]).decode().strip()
+        if out and Path(out).exists():
+            return out
+    except Exception:
+        pass
+    return fallback
+
+
+async def make_audio(text, voice, path):
+    await edge_tts.Communicate(text, voice).save(str(path))
 
 
 def audio_duration(path):
@@ -23,43 +50,63 @@ def audio_duration(path):
     return float(out.strip())
 
 
-def main():
-    ideas_file = OUTPUT_DIR / "shorts_ideas.json"
-    ideas = json.loads(ideas_file.read_text(encoding="utf-8"))
+def build_filter(script, duration, font, wrap, tag):
+    sentences = [s for s in re.split(r"(?<=[.!?।])\s+", script.strip()) if s]
+    total = sum(len(s) for s in sentences) or 1
+    parts, t = [], 0.0
+    for k, s in enumerate(sentences):
+        d = duration * len(s) / total
+        tf = TMP / f"cap_{tag}_{k}.txt"
+        tf.write_text(textwrap.fill(s, wrap), encoding="utf-8")
+        parts.append(
+            f"drawtext=fontfile={font}:textfile={tf}:expansion=none"
+            ":fontcolor=white:fontsize=64:line_spacing=20"
+            ":borderw=3:bordercolor=black"
+            ":x=(w-text_w)/2:y=(h-text_h)/2"
+            f":enable='between(t,{t:.2f},{t + d:.2f})'"
+        )
+        t += d
+    return ",".join(parts)
 
+
+def render(script, lang, name):
+    cfg = LANGS[lang]
+    font = find_font(cfg["font_query"], cfg["font_fallback"])
+    print(f"[{name}] font: {font}")
+
+    audio = OUTPUT_DIR / f"{name}.mp3"
+    video = OUTPUT_DIR / f"{name}.mp4"
+
+    asyncio.run(make_audio(script.replace("\n", " "), cfg["voice"], audio))
+    dur = audio_duration(audio)
+    vf = build_filter(script, dur, font, cfg["wrap"], name)
+
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", f"color=c=0x0b1d3a:s=1080x1920:d={dur + 0.5}:r=30",
+        "-i", str(audio),
+        "-vf", vf,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-shortest", str(video),
+    ], check=True)
+    print(f"Created {video} ({dur:.1f}s)")
+
+
+def main():
+    ideas = json.loads(
+        (OUTPUT_DIR / "shorts_ideas.json").read_text(encoding="utf-8"))
     if not ideas:
         print("No ideas found, nothing to render.")
         return
 
-    for i, idea in enumerate(ideas[:2], start=1):
-        script = idea["script"]
-        audio = OUTPUT_DIR / f"voice_{i}.mp3"
-        textfile = OUTPUT_DIR / f"text_{i}.txt"
-        video = OUTPUT_DIR / f"short_{i}.mp4"
-
-        asyncio.run(make_audio(script.replace("\n", " "), audio))
-        duration = audio_duration(audio) + 0.5
-
-        wrapped = "\n".join(
-            textwrap.fill(p, 24) for p in script.split("\n\n")
-        )
-        textfile.write_text(wrapped.replace("\n\n", "\n\n"), encoding="utf-8")
-
-        vf = (
-            f"drawtext=fontfile={FONT}:textfile={textfile}"
-            ":fontcolor=white:fontsize=64:line_spacing=18"
-            ":x=(w-text_w)/2:y=(h-text_h)/2"
-        )
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", f"color=c=0x101830:s=1080x1920:d={duration}:r=30",
-            "-i", str(audio),
-            "-vf", vf,
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-shortest", str(video),
-        ], check=True)
-        print(f"Created {video}")
+    for i, idea in enumerate(ideas, start=1):
+        for lang in ("en", "hi"):
+            script = idea[lang]["script"]
+            try:
+                render(script, lang, f"short_{i}_{lang}")
+            except Exception as error:
+                print(f"short_{i}_{lang} failed: {error}")
 
 
 if __name__ == "__main__":
